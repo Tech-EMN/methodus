@@ -6,7 +6,7 @@
     <title>Methodus - Validação de Relatórios</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
-        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .container { max-width: 900px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         h1 { color: #2c3e50; text-align: center; }
         .upload-section, .result-section { margin-top: 30px; }
         .result-section { display: none; }
@@ -18,11 +18,19 @@
         .btn-reject { background-color: #e74c3c; }
         .btn-reject:hover { background-color: #c0392b; }
         .loader { display: none; text-align: center; margin-top: 20px; font-weight: bold; color: #7f8c8d; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        
+        /* Estilos para os formulários e tabelas */
+        .form-group { margin-bottom: 20px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; color: #2c3e50; }
         input[type="text"], textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-        textarea { resize: vertical; min-height: 80px; }
-        .actions { text-align: center; margin-top: 20px; }
+        
+        .data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+        .data-table th { background-color: #34495e; color: white; padding: 10px; text-align: left; border: 1px solid #ddd; }
+        .data-table td { border: 1px solid #ddd; padding: 5px; }
+        .data-table input[type="text"] { width: 100%; border: none; padding: 8px; box-sizing: border-box; background-color: #f9f9f9; }
+        .data-table input[type="text"]:focus { background-color: #fff; outline: 1px solid #3498db; }
+        
+        .actions { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }
     </style>
 </head>
 <body>
@@ -31,7 +39,7 @@
     <h1>Análise de Relatórios - Methodus</h1>
     
     <div class="upload-section" id="uploadSection">
-        <p style="text-align: center;">Faça o upload do relatório bruto (PDF ou Excel) exportado do Domínio.</p>
+        <p style="text-align: center;">Faça o upload do relatório bruto exportado do Domínio.</p>
         <input type="file" id="fileInput" accept=".pdf, .xlsx, .xls">
         <div style="text-align: center;">
             <button onclick="analyzeFile()">Enviar para Análise IA</button>
@@ -43,21 +51,24 @@
         <h2>Dados Extraídos</h2>
         <p>Revise e edite as informações abaixo antes de aprovar o disparo do relatório.</p>
         
-        <form id="dataForm">
-            </form>
+        <div id="dataForm">
+            </div>
 
         <div class="actions">
             <button class="btn-approve" onclick="sendDecision('Aprovado')">Aprovado - Seguir Fluxo</button>
             <button class="btn-reject" onclick="sendDecision('Recusado')">Recusado - Descartar</button>
         </div>
-        <div class="loader" id="actionLoader">Enviando decisão...</div>
+        <div class="loader" id="actionLoader">Enviando decisão para o n8n...</div>
     </div>
 </div>
 
 <script>
-    // Substitua pela URL base do seu n8n
+    // Substitua pelas URLs de Webhook de Produção do seu n8n
     const N8N_URL_ANALYZE = "https://n8n.servidoremn.site/webhook/analise-documento";
     const N8N_URL_DECISION = "https://n8n.servidoremn.site/webhook/decisao-relatorio";
+
+    // Variável global para armazenar o estado atual dos dados editados
+    let currentData = {};
 
     async function analyzeFile() {
         const fileInput = document.getElementById('fileInput');
@@ -80,66 +91,126 @@
             if (!response.ok) throw new Error('Erro na análise do n8n');
             
             const data = await response.json();
-            populateForm(data);
+            
+            // Ocasionalmente o n8n pode devolver o JSON dentro de um array ou objeto aninhado. 
+            // Esse ajuste garante que pegamos o objeto correto.
+            const extractedData = Array.isArray(data) ? data[0].text || data[0] : data.text || data;
+            
+            let parsedData = extractedData;
+            if (typeof extractedData === 'string') {
+                try {
+                    parsedData = JSON.parse(extractedData);
+                } catch (e) {
+                    console.error("O retorno não era um JSON válido stringificado", e);
+                }
+            }
+
+            populateForm(parsedData);
             
             document.getElementById('uploadSection').style.display = 'none';
             document.getElementById('resultSection').style.display = 'block';
         } catch (error) {
             console.error('Erro:', error);
-            alert('Falha ao processar o arquivo. Verifique a conexão com o n8n.');
+            alert('Falha ao processar o arquivo. Verifique se o n8n está rodando e a URL está correta.');
         } finally {
             document.getElementById('loader').style.display = 'none';
         }
     }
 
     function populateForm(data) {
-        const form = document.getElementById('dataForm');
-        form.innerHTML = ''; 
+        // Cria uma cópia profunda dos dados para o estado local
+        currentData = JSON.parse(JSON.stringify(data)); 
+        const formContainer = document.getElementById('dataForm');
+        formContainer.innerHTML = ''; 
 
-        // Cria os campos dinamicamente com base no JSON devolvido pelo GPT
-        for (const [key, value] of Object.entries(data)) {
+        for (const [key, value] of Object.entries(currentData)) {
             const group = document.createElement('div');
             group.className = 'form-group';
             
             const label = document.createElement('label');
             label.innerText = key.replace(/_/g, ' ').toUpperCase();
-            
-            let input;
-            if (typeof value === 'object') {
-                input = document.createElement('textarea');
-                input.value = JSON.stringify(value, null, 2);
-            } else {
-                input = document.createElement('input');
+            group.appendChild(label);
+
+            // Verifica se o valor é um Array de Objetos (como itens_extrato ou itens)
+            if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'object') {
+                const table = document.createElement('table');
+                table.className = 'data-table';
+                
+                // Gera o Cabeçalho da Tabela
+                const thead = document.createElement('thead');
+                const headerRow = document.createElement('tr');
+                const columns = Object.keys(value[0]);
+                
+                columns.forEach(col => {
+                    const th = document.createElement('th');
+                    th.innerText = col.replace(/_/g, ' ').toUpperCase();
+                    headerRow.appendChild(th);
+                });
+                thead.appendChild(headerRow);
+                table.appendChild(thead);
+
+                // Gera o Corpo da Tabela
+                const tbody = document.createElement('tbody');
+                value.forEach((rowObj, rowIndex) => {
+                    const tr = document.createElement('tr');
+                    
+                    columns.forEach(col => {
+                        const td = document.createElement('td');
+                        const input = document.createElement('input');
+                        input.type = 'text';
+                        input.value = rowObj[col] !== null && rowObj[col] !== undefined ? rowObj[col] : '';
+                        
+                        // Atualiza o objeto global 'currentData' sempre que o usuário digitar algo na tabela
+                        input.onchange = (e) => {
+                            currentData[key][rowIndex][col] = e.target.value;
+                        };
+                        
+                        td.appendChild(input);
+                        tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
+                });
+                
+                table.appendChild(tbody);
+                group.appendChild(table);
+                
+            } 
+            // Trata valores simples (faturamento_total, etc)
+            else if (typeof value !== 'object') {
+                const input = document.createElement('input');
                 input.type = 'text';
                 input.value = value;
+                
+                // Atualiza o objeto global 'currentData' sempre que o usuário digitar algo
+                input.onchange = (e) => {
+                    // Tenta manter o formato de número se o original for número
+                    currentData[key] = isNaN(e.target.value) ? e.target.value : Number(e.target.value);
+                };
+                
+                group.appendChild(input);
             }
-            input.name = key;
-            input.id = key;
+            // Fallback para objetos complexos que não são arrays
+            else {
+                const textarea = document.createElement('textarea');
+                textarea.value = JSON.stringify(value, null, 2);
+                textarea.onchange = (e) => {
+                    try { currentData[key] = JSON.parse(e.target.value); } 
+                    catch(err) { currentData[key] = e.target.value; }
+                };
+                group.appendChild(textarea);
+            }
 
-            group.appendChild(label);
-            group.appendChild(input);
-            form.appendChild(group);
+            formContainer.appendChild(group);
         }
     }
 
     async function sendDecision(status) {
         document.getElementById('actionLoader').style.display = 'block';
         
-        const form = document.getElementById('dataForm');
-        const formData = new FormData(form);
-        const finalData = {};
-        
-        for (let [key, value] of formData.entries()) {
-            try {
-                finalData[key] = JSON.parse(value); // Tenta parsear caso seja um array/objeto (ex: fornecedores)
-            } catch (e) {
-                finalData[key] = value;
-            }
-        }
-
+        // Enviamos o estado global 'currentData' diretamente, que já contém todas as edições feitas na tela
         const payload = {
             status: status,
-            dados_revisados: finalData
+            dados_revisados: currentData
         };
 
         try {
@@ -150,8 +221,8 @@
             });
 
             if (response.ok) {
-                alert(`Relatório ${status} com sucesso!`);
-                location.reload(); // Recarrega a página para o próximo arquivo
+                alert(`Relatório ${status} com sucesso! O fluxo continuará no n8n.`);
+                location.reload(); 
             } else {
                 throw new Error('Erro ao enviar decisão');
             }
@@ -164,6 +235,5 @@
     }
 </script>
 
-    
 </body>
 </html>
