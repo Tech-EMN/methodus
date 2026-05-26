@@ -6,12 +6,11 @@
     <title>Methodus - Validação de Relatórios</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
-        .container { max-width: 900px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .container { max-width: 950px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         h1 { color: #2c3e50; text-align: center; }
         .upload-section, .result-section { margin-top: 30px; }
         .result-section { display: none; }
         
-        /* Nova área de upload para múltiplos arquivos */
         .file-upload-box { border: 2px dashed #3498db; padding: 30px; text-align: center; border-radius: 8px; background: #ebf5fb; margin-bottom: 20px; }
         input[type="file"] { display: block; margin: 0 auto 20px; font-size: 16px; }
         
@@ -21,16 +20,29 @@
         .btn-approve:hover { background-color: #27ae60; }
         .btn-reject { background-color: #e74c3c; }
         .btn-reject:hover { background-color: #c0392b; }
-        .loader { display: none; text-align: center; margin-top: 20px; font-weight: bold; color: #7f8c8d; }
         
         /* Sistema de Abas */
-        .tab-bar { display: flex; overflow-x: auto; border-bottom: 2px solid #bdc3c7; margin-bottom: 20px; padding-bottom: 5px; }
-        .tab-button { background-color: #ecf0f1; color: #7f8c8d; padding: 10px 15px; margin-right: 5px; border-radius: 5px 5px 0 0; font-size: 14px; white-space: nowrap; }
+        .tab-bar { display: flex; overflow-x: auto; border-bottom: 2px solid #bdc3c7; margin-bottom: 20px; padding-bottom: 5px; align-items: center; }
+        .tab-button { background-color: #ecf0f1; color: #7f8c8d; padding: 10px 35px 10px 15px; margin-right: 5px; border-radius: 5px 5px 0 0; font-size: 14px; white-space: nowrap; cursor: pointer; position: relative; border: none; outline: none; }
         .tab-button.active { background-color: #2c3e50; color: #fff; font-weight: bold; }
+        .tab-button.loading { cursor: not-allowed; padding-right: 15px; opacity: 0.8; }
+        
+        /* Botão Fechar (x) */
+        .close-tab { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: #e74c3c; font-weight: bold; cursor: pointer; font-size: 16px; line-height: 1; }
+        .close-tab:hover { color: #c0392b; transform: translateY(-50%) scale(1.2); }
+        
+        /* Botão Adicionar (+) */
+        .add-tab-btn { background-color: #27ae60; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; font-size: 20px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; margin-left: 5px; flex-shrink: 0; padding: 0;}
+        .add-tab-btn:hover { background-color: #2ecc71; transform: scale(1.1); }
+        
+        /* Spinner de Carregamento */
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(0,0,0,0.2); border-radius: 50%; border-top-color: #3498db; animation: spin 1s ease-in-out infinite; margin-right: 8px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .tab-button.active .spinner { border-top-color: #fff; border-color: rgba(255,255,255,0.3); border-top-color: #fff; }
+
+        /* Formulários e Tabelas */
         .tab-content { display: none; }
         .tab-content.active { display: block; }
-        
-        /* Formulários e Tabelas */
         .form-group { margin-bottom: 20px; }
         label { display: block; font-weight: bold; margin-bottom: 5px; color: #2c3e50; }
         input[type="text"], textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
@@ -52,13 +64,15 @@
         <div class="file-upload-box">
             <p>Selecione um ou múltiplos extratos (PDF/Excel) do Domínio.</p>
             <input type="file" id="fileInput" accept=".pdf, .xlsx, .xls" multiple>
-            <button onclick="processFilesSequentially()">Iniciar Análise em Lote</button>
+            <button onclick="startInitialProcessing()">Iniciar Análise em Lote</button>
         </div>
-        <div class="loader" id="loader">Preparando fila de arquivos...</div>
     </div>
 
     <div class="result-section" id="resultSection">
-        <div class="tab-bar" id="tabBar"></div>
+        <div class="tab-bar" id="tabBar">
+            <button class="add-tab-btn" id="addTabBtn" title="Adicionar mais extratos" onclick="document.getElementById('addMoreInput').click()">+</button>
+            <input type="file" id="addMoreInput" accept=".pdf, .xlsx, .xls" multiple style="display: none;" onchange="processMoreFiles()">
+        </div>
         
         <div id="tabsContainer"></div>
 
@@ -66,7 +80,7 @@
             <button class="btn-approve" onclick="sendDecision('Aprovado')">Aprovar Aba Atual</button>
             <button class="btn-reject" onclick="sendDecision('Recusado')">Descartar Aba Atual</button>
         </div>
-        <div class="loader" id="actionLoader">Enviando decisão para o n8n...</div>
+        <div class="loader" id="actionLoader" style="display: none;">Enviando decisão para o n8n...</div>
     </div>
 </div>
 
@@ -75,36 +89,46 @@
 
     const N8N_URL_ANALYZE = "https://n8n.servidoremn.site/webhook/analise-documento";
     const N8N_URL_DECISION = "https://n8n.servidoremn.site/webhook/decisao-relatorio";
-
-    // Armazena os dados de cada arquivo processado separadamente { "nomeDoArquivo": { dados_json } }
+    
     let allExtractedData = {};
     let activeTabId = null;
+    let globalFileIndex = 0; // Garante IDs únicos mesmo adicionando arquivos novos depois
 
-    async function processFilesSequentially() {
+    // Inicia o processo da tela inicial
+    function startInitialProcessing() {
         const fileInput = document.getElementById('fileInput');
-        const files = fileInput.files;
-        
-        if (files.length === 0) {
+        if (fileInput.files.length === 0) {
             alert('Por favor, selecione ao menos um arquivo.');
             return;
         }
-
         document.getElementById('uploadSection').style.display = 'none';
         document.getElementById('resultSection').style.display = 'block';
-        const loader = document.getElementById('loader');
-        loader.style.display = 'block';
+        processFiles(fileInput.files);
+    }
 
-        // Loop principal: Processa cada arquivo um por um de forma isolada
+    // Processa arquivos adicionados pelo botão (+)
+    function processMoreFiles() {
+        const addMoreInput = document.getElementById('addMoreInput');
+        if (addMoreInput.files.length > 0) {
+            processFiles(addMoreInput.files);
+            addMoreInput.value = ''; // Reseta o input para permitir selecionar o mesmo arquivo novamente se necessário
+        }
+    }
+
+    // Motor principal de processamento sequencial
+    async function processFiles(files) {
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
-            const fileId = `file_${i}`;
+            const fileId = `file_${globalFileIndex++}`;
             
-            loader.innerText = `Analisando IA: ${file.name} (${i + 1} de ${files.length})...`;
+            // 1. Cria a aba visualmente no estado de "Carregando"
+            createLoadingTab(fileId, file.name);
 
             const formData = new FormData();
             formData.append('file', file);
 
             try {
+                // 2. Envia para o n8n
                 const response = await fetch(N8N_URL_ANALYZE, { method: 'POST', body: formData });
                 if (!response.ok) throw new Error('Erro na análise');
                 
@@ -112,51 +136,68 @@
                 const extractedText = Array.isArray(data) ? data[0].text || data[0] : data.text || data;
                 let parsedData = typeof extractedText === 'string' ? JSON.parse(extractedText) : extractedText;
 
-                // Armazena no estado global
+                // 3. Salva os dados estruturados
                 allExtractedData[fileId] = {
                     fileName: file.name,
                     data: parsedData
                 };
 
-                // Cria a Aba e o Formulário na interface assim que o arquivo termina
-                createTabAndForm(fileId, file.name, parsedData);
+                // 4. Atualiza a aba com sucesso e gera o formulário
+                updateTabSuccess(fileId, file.name, parsedData);
                 
-                // Se for o primeiro arquivo a terminar, já exibe ele na tela
-                if (i === 0) {
+                // Exibe os botões de ação se for a primeira aba sendo carregada com sucesso
+                document.getElementById('actionButtons').style.display = 'block';
+                
+                // Se for a única aba ativa no momento (ou a primeira), muda o foco para ela
+                if (!activeTabId || Object.keys(allExtractedData).length === 1) {
                     switchTab(fileId);
-                    document.getElementById('actionButtons').style.display = 'block';
                 }
 
             } catch (error) {
                 console.error(`Erro ao processar ${file.name}:`, error);
-                alert(`O arquivo ${file.name} falhou. A automação continuará com o próximo.`);
+                updateTabError(fileId, file.name);
             }
         }
-
-        loader.style.display = 'none';
     }
 
-    function createTabAndForm(fileId, fileName, data) {
-        // 1. Criar o botão da aba
+    // Cria a aba temporária com o Spinner
+    function createLoadingTab(fileId, fileName) {
         const tabBar = document.getElementById('tabBar');
+        const addBtn = document.getElementById('addTabBtn');
+        
         const btn = document.createElement('button');
-        btn.className = 'tab-button';
+        btn.className = 'tab-button loading';
         btn.id = `btn_${fileId}`;
-        btn.innerText = fileName;
-        btn.onclick = () => switchTab(fileId);
-        tabBar.appendChild(btn);
+        btn.innerHTML = `<span class="spinner"></span> ${fileName}`;
+        
+        // Insere a nova aba sempre ANTES do botão "+"
+        tabBar.insertBefore(btn, addBtn);
+        
+        // Foca visualmente na aba que está carregando se não houver outra ativa
+        if (!activeTabId) {
+            btn.classList.add('active');
+        }
+    }
 
-        // 2. Criar o container do conteúdo
+    // Atualiza a aba quando o n8n devolve o JSON perfeitamente
+    function updateTabSuccess(fileId, fileName, data) {
+        const btn = document.getElementById(`btn_${fileId}`);
+        btn.className = 'tab-button'; // Remove o 'loading'
+        
+        // Adiciona o nome do arquivo e o botão "x" (com stopPropagation para não ativar a aba ao clicar no X)
+        btn.innerHTML = `${fileName} <span class="close-tab" onclick="event.stopPropagation(); closeTab('${fileId}')" title="Remover Extrato">✖</span>`;
+        btn.onclick = () => switchTab(fileId);
+
+        // Cria a área de conteúdo (formulário)
         const tabsContainer = document.getElementById('tabsContainer');
         const contentDiv = document.createElement('div');
         contentDiv.className = 'tab-content';
         contentDiv.id = `content_${fileId}`;
 
-        // 3. Gerar a estrutura de formulários e tabelas dinâmicas (Reaproveitado)
+        // Lógica de renderização das tabelas e inputs baseada no JSON recebido
         for (const [key, value] of Object.entries(data)) {
             const group = document.createElement('div');
             group.className = 'form-group';
-            
             const label = document.createElement('label');
             label.innerText = key.replace(/_/g, ' ').toUpperCase();
             group.appendChild(label);
@@ -164,7 +205,6 @@
             if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'object') {
                 const table = document.createElement('table');
                 table.className = 'data-table';
-                
                 const thead = document.createElement('thead');
                 const headerRow = document.createElement('tr');
                 const columns = Object.keys(value[0]);
@@ -185,11 +225,7 @@
                         const input = document.createElement('input');
                         input.type = 'text';
                         input.value = rowObj[col] !== null && rowObj[col] !== undefined ? rowObj[col] : '';
-                        
-                        // Atualiza os dados da ABA ESPECÍFICA em tempo real
-                        input.onchange = (e) => {
-                            allExtractedData[fileId].data[key][rowIndex][col] = e.target.value;
-                        };
+                        input.onchange = (e) => { allExtractedData[fileId].data[key][rowIndex][col] = e.target.value; };
                         td.appendChild(input);
                         tr.appendChild(td);
                     });
@@ -197,40 +233,76 @@
                 });
                 table.appendChild(tbody);
                 group.appendChild(table);
-            } 
-            else if (typeof value !== 'object') {
+            } else if (typeof value !== 'object') {
                 const input = document.createElement('input');
                 input.type = 'text';
                 input.value = value;
-                input.onchange = (e) => {
-                    allExtractedData[fileId].data[key] = isNaN(e.target.value) ? e.target.value : Number(e.target.value);
-                };
+                input.onchange = (e) => { allExtractedData[fileId].data[key] = isNaN(e.target.value) ? e.target.value : Number(e.target.value); };
                 group.appendChild(input);
             }
-
             contentDiv.appendChild(group);
         }
         tabsContainer.appendChild(contentDiv);
+        
+        // Se a aba estava ativa visualmente durante o loading, garante que o conteúdo apareça
+        if (activeTabId === fileId || document.querySelectorAll('.tab-content.active').length === 0) {
+            switchTab(fileId);
+        }
+    }
+
+    // Sinaliza na aba se o processamento falhou
+    function updateTabError(fileId, fileName) {
+        const btn = document.getElementById(`btn_${fileId}`);
+        btn.className = 'tab-button';
+        btn.style.backgroundColor = '#fadbd8'; // Fundo avermelhado
+        btn.style.color = '#c0392b';
+        btn.innerHTML = `Erro: ${fileName} <span class="close-tab" onclick="event.stopPropagation(); closeTab('${fileId}')">✖</span>`;
     }
 
     function switchTab(fileId) {
-        // Remove a classe 'active' de todos os botões e conteúdos
         document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
         
-        // Adiciona a classe 'active' apenas na aba selecionada
-        document.getElementById(`btn_${fileId}`).classList.add('active');
-        document.getElementById(`content_${fileId}`).classList.add('active');
+        const targetBtn = document.getElementById(`btn_${fileId}`);
+        const targetContent = document.getElementById(`content_${fileId}`);
+        
+        if (targetBtn) targetBtn.classList.add('active');
+        if (targetContent) targetContent.classList.add('active');
+        
         activeTabId = fileId;
     }
 
+    // Função engatilhada pelo "X" da aba
+    function closeTab(fileId) {
+        // Remove do HTML
+        const btn = document.getElementById(`btn_${fileId}`);
+        const content = document.getElementById(`content_${fileId}`);
+        if (btn) btn.remove();
+        if (content) content.remove();
+        
+        // Remove dos dados
+        if (allExtractedData[fileId]) delete allExtractedData[fileId];
+
+        // Se fechamos a aba que estava aberta, precisamos focar em outra
+        if (activeTabId === fileId) {
+            activeTabId = null;
+            const remainingTabs = Object.keys(allExtractedData);
+            if (remainingTabs.length > 0) {
+                switchTab(remainingTabs[remainingTabs.length - 1]); // Pula para a última aba disponível
+            } else {
+                // Esconde botões se não sobrou nenhuma aba com sucesso
+                document.getElementById('actionButtons').style.display = 'none';
+            }
+        }
+    }
+
+    // Envio para o n8n
     async function sendDecision(status) {
-        if (!activeTabId) return;
+        if (!activeTabId || !allExtractedData[activeTabId]) return;
 
         const actionLoader = document.getElementById('actionLoader');
         actionLoader.style.display = 'block';
         
-        // Extrai os dados apenas do arquivo/aba que está aberto na tela no momento
         const fileData = allExtractedData[activeTabId];
         const payload = {
             fileName: fileData.fileName,
@@ -246,8 +318,8 @@
             });
 
             if (response.ok) {
-                alert(`Arquivo ${fileData.fileName} ${status} com sucesso!`);
-                removeProcessedTab(activeTabId);
+                // Usa a mesma função do "X" para remover a aba após processamento
+                closeTab(activeTabId);
             } else {
                 throw new Error('Erro na comunicação');
             }
@@ -256,23 +328,6 @@
             alert('Falha ao enviar decisão para o n8n.');
         } finally {
             actionLoader.style.display = 'none';
-        }
-    }
-
-    function removeProcessedTab(fileId) {
-        // Remove a aba atual do HTML e do dicionário de dados
-        document.getElementById(`btn_${fileId}`).remove();
-        document.getElementById(`content_${fileId}`).remove();
-        delete allExtractedData[fileId];
-
-        // Verifica se ainda existem outras abas
-        const remainingTabs = Object.keys(allExtractedData);
-        if (remainingTabs.length > 0) {
-            switchTab(remainingTabs[0]); // Pula para a próxima aba automaticamente
-        } else {
-            // Se tudo foi processado, reinicia a página
-            alert("Todos os relatórios da fila foram processados!");
-            location.reload(); 
         }
     }
 </script>
