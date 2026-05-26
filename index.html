@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Methodus - Validação de Relatórios</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; text-align: center; }
+        .upload-section, .result-section { margin-top: 30px; }
+        .result-section { display: none; }
+        input[type="file"] { display: block; margin: 0 auto 20px; }
+        button { background-color: #3498db; color: #fff; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 16px; margin: 5px; }
+        button:hover { background-color: #2980b9; }
+        .btn-approve { background-color: #2ecc71; }
+        .btn-approve:hover { background-color: #27ae60; }
+        .btn-reject { background-color: #e74c3c; }
+        .btn-reject:hover { background-color: #c0392b; }
+        .loader { display: none; text-align: center; margin-top: 20px; font-weight: bold; color: #7f8c8d; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        input[type="text"], textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        textarea { resize: vertical; min-height: 80px; }
+        .actions { text-align: center; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Análise de Relatórios - Methodus</h1>
+    
+    <div class="upload-section" id="uploadSection">
+        <p style="text-align: center;">Faça o upload do relatório bruto (PDF ou Excel) exportado do Domínio.</p>
+        <input type="file" id="fileInput" accept=".pdf, .xlsx, .xls">
+        <div style="text-align: center;">
+            <button onclick="analyzeFile()">Enviar para Análise IA</button>
+        </div>
+        <div class="loader" id="loader">Processando documento via IA... Aguarde.</div>
+    </div>
+
+    <div class="result-section" id="resultSection">
+        <h2>Dados Extraídos</h2>
+        <p>Revise e edite as informações abaixo antes de aprovar o disparo do relatório.</p>
+        
+        <form id="dataForm">
+            </form>
+
+        <div class="actions">
+            <button class="btn-approve" onclick="sendDecision('Aprovado')">Aprovado - Seguir Fluxo</button>
+            <button class="btn-reject" onclick="sendDecision('Recusado')">Recusado - Descartar</button>
+        </div>
+        <div class="loader" id="actionLoader">Enviando decisão...</div>
+    </div>
+</div>
+
+<script>
+    // Substitua pela URL base do seu n8n
+    const N8N_URL_ANALYZE = "https://n8n.servidoremn.site/webhook/analise-documento";
+    const N8N_URL_DECISION = "https://n8n.servidoremn.site/webhook/decisao-relatorio";
+
+    async function analyzeFile() {
+        const fileInput = document.getElementById('fileInput');
+        if (!fileInput.files[0]) {
+            alert('Por favor, selecione um arquivo primeiro.');
+            return;
+        }
+
+        document.getElementById('loader').style.display = 'block';
+        
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        try {
+            const response = await fetch(N8N_URL_ANALYZE, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) throw new Error('Erro na análise do n8n');
+            
+            const data = await response.json();
+            populateForm(data);
+            
+            document.getElementById('uploadSection').style.display = 'none';
+            document.getElementById('resultSection').style.display = 'block';
+        } catch (error) {
+            console.error('Erro:', error);
+            alert('Falha ao processar o arquivo. Verifique a conexão com o n8n.');
+        } finally {
+            document.getElementById('loader').style.display = 'none';
+        }
+    }
+
+    function populateForm(data) {
+        const form = document.getElementById('dataForm');
+        form.innerHTML = ''; 
+
+        // Cria os campos dinamicamente com base no JSON devolvido pelo GPT
+        for (const [key, value] of Object.entries(data)) {
+            const group = document.createElement('div');
+            group.className = 'form-group';
+            
+            const label = document.createElement('label');
+            label.innerText = key.replace(/_/g, ' ').toUpperCase();
+            
+            let input;
+            if (typeof value === 'object') {
+                input = document.createElement('textarea');
+                input.value = JSON.stringify(value, null, 2);
+            } else {
+                input = document.createElement('input');
+                input.type = 'text';
+                input.value = value;
+            }
+            input.name = key;
+            input.id = key;
+
+            group.appendChild(label);
+            group.appendChild(input);
+            form.appendChild(group);
+        }
+    }
+
+    async function sendDecision(status) {
+        document.getElementById('actionLoader').style.display = 'block';
+        
+        const form = document.getElementById('dataForm');
+        const formData = new FormData(form);
+        const finalData = {};
+        
+        for (let [key, value] of formData.entries()) {
+            try {
+                finalData[key] = JSON.parse(value); // Tenta parsear caso seja um array/objeto (ex: fornecedores)
+            } catch (e) {
+                finalData[key] = value;
+            }
+        }
+
+        const payload = {
+            status: status,
+            dados_revisados: finalData
+        };
+
+        try {
+            const response = await fetch(N8N_URL_DECISION, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.ok) {
+                alert(`Relatório ${status} com sucesso!`);
+                location.reload(); // Recarrega a página para o próximo arquivo
+            } else {
+                throw new Error('Erro ao enviar decisão');
+            }
+        } catch (error) {
+            console.error('Erro:', error);
+            alert('Falha ao registrar a decisão no n8n.');
+        } finally {
+            document.getElementById('actionLoader').style.display = 'none';
+        }
+    }
+</script>
+
+</body>
+</html>
